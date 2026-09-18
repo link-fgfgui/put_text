@@ -20,8 +20,8 @@
 | [`windows`](../../tree/windows) | Windows 10 / 11 | C++ 单二进制，零第三方依赖 | `WM_COMMAND` / `WM_PASTE` → `SendInput` `Ctrl+V` |
 
 ```bash
-git clone -b linux   <repo-url> put_text   # Linux 后端
-git clone -b windows <repo-url> put_text   # Windows 后端
+git clone -b linux   https://github.com/link-fgfgui/put_text.git put_text   # Linux 后端
+git clone -b windows https://github.com/link-fgfgui/put_text.git put_text   # Windows 后端
 ```
 
 网页只用到 `main`，直接拿 `index.html` 一个文件即可，不需要后端代码。
