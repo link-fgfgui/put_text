@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>put_text</title>
+<style>
+  :root {
+    --bg: #16181d;
+    --surface: #1e2128;
+    --surface-2: #262a33;
+    --border: #333844;
+    --text: #e6e8ec;
+    --muted: #8b93a3;
+    --accent: #5b9dff;
+    --ok: #4ec98a;
+    --err: #ff6b6b;
+    --radius: 12px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f4f5f7;
+      --surface: #ffffff;
+      --surface-2: #eceef2;
+      --border: #d9dde5;
+      --text: #1b1f27;
+      --muted: #6b7280;
+      --accent: #2f6fe4;
+      --ok: #17915c;
+      --err: #d64545;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { height: 100%; }
+
+  body {
+    margin: 0;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior: none;
+  }
+
+  /* ─── 顶栏 ─── */
+
+  header {
+    flex: none;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 10px 12px;
+    padding-top: calc(10px + env(safe-area-inset-top));
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .device {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 10px 12px;
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .device .name {
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .device .host {
+    flex: none;
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 45%;
+  }
+  .device .caret { flex: none; color: var(--muted); font-size: 12px; }
+
+  .icon {
+    flex: none;
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 18px;
+    cursor: pointer;
+  }
+
+  /* ─── 输入区 ─── */
+
+  main { flex: 1; min-height: 0; display: flex; }
+
+  textarea {
+    flex: 1;
+    width: 100%;
+    padding: 16px 14px;
+    background: transparent;
+    color: var(--text);
+    border: 0;
+    outline: none;
+    resize: none;
+    font: inherit;
+    font-size: 16px; /* 低于 16px 时 iOS 会放大页面 */
+    line-height: 1.6;
+    caret-color: var(--accent);
+  }
+  textarea::placeholder { color: var(--muted); }
+  body.sending textarea { caret-color: var(--ok); }
+
+  /* ─── 状态栏 ─── */
+
+  footer {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+  }
+
+  #status {
+    flex: 1;
+    min-width: 0;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #status[data-kind="ok"] { color: var(--ok); }
+  #status[data-kind="err"] { color: var(--err); }
+  #status[data-kind="busy"] { color: var(--accent); }
+
+  #count { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  #send {
+    flex: none;
+    padding: 8px 14px;
+    min-height: 36px;
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  #send:disabled { opacity: .4; cursor: default; }
+
+  /* ─── 设备面板 ─── */
+
+  dialog {
+    width: min(100%, 520px);
+    max-height: min(86dvh, 720px);
+    margin: auto auto 0;
+    padding: 0;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-bottom: 0;
+    border-radius: 16px 16px 0 0;
+    overflow: hidden;
+  }
+  dialog::backdrop { background: rgb(0 0 0 / .5); }
+  @media (min-width: 560px) {
+    dialog { margin: auto; border-bottom: 1px solid var(--border); border-radius: 16px; }
+  }
+
+  .sheet { display: flex; flex-direction: column; max-height: inherit; }
+
+  .sheet-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+  }
+  .sheet-head button {
+    margin-left: auto;
+    width: 32px;
+    height: 32px;
+    display: grid;
+    place-items: center;
+    background: none;
+    color: var(--muted);
+    border: 0;
+    border-radius: 8px;
+    font-size: 20px;
+    cursor: pointer;
+  }
+
+  .sheet-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+  .dev {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 2px 10px;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .dev[data-active="1"] { background: var(--surface-2); }
+
+  .dev .pick {
+    grid-column: 1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    padding: 4px 0;
+    background: none;
+    color: var(--text);
+    border: 0;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .dev .pick .tick { flex: none; width: 18px; color: var(--accent); }
+  .dev .pick .label { min-width: 0; }
+  .dev .pick .label b {
+    display: block;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .dev .pick .label small {
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dev .ops { grid-column: 2; grid-row: 1 / 3; display: flex; gap: 6px; }
+  .dev .ops button {
+    padding: 7px 10px;
+    background: none;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .empty { padding: 24px 16px; color: var(--muted); text-align: center; }
+
+  form {
+    flex: none;
+    display: grid;
+    gap: 10px;
+    padding: 14px 16px;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom));
+    background: var(--surface-2);
+    border-top: 1px solid var(--border);
+  }
+  form h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--muted); }
+  form label { display: grid; gap: 5px; font-size: 12px; color: var(--muted); }
+  form input, form select {
+    width: 100%;
+    padding: 10px 12px;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    font: inherit;
+    font-size: 16px;
+  }
+  form .row { display: flex; gap: 8px; }
+  form .row > label:first-child { flex: 2; }
+  form .row > label:last-child { flex: 1; }
+  form .actions { display: flex; gap: 8px; justify-content: flex-end; }
+  form button {
+    padding: 11px 18px;
+    min-height: 44px;
+    background: var(--accent);
+    color: #fff;
+    border: 0;
+    border-radius: 9px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  form button.ghost { background: none; color: var(--muted); border: 1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<header>
+  <button class="device" id="picker">
+    <span class="name" id="device-name">未选择设备</span>
+    <span class="host" id="device-host"></span>
+    <span class="caret">▾</span>
+  </button>
+  <button class="icon" id="manage" title="管理设备">⚙</button>
+</header>
+
+<main>
+  <textarea id="input" rows="1" enterkeyhint="enter"
+    placeholder="在这里输入，停 1.5 秒自动上屏…"
+    autocorrect="off" autocapitalize="off" spellcheck="false"
+    autocomplete="off" data-gramm="false"></textarea>
+</main>
+
+<footer>
+  <span id="status">就绪</span>
+  <span id="count"></span>
+  <button id="send" disabled>发送</button>
+</footer>
+
+<dialog id="sheet">
+  <div class="sheet">
+    <div class="sheet-head">
+      设备
+      <button id="close" title="关闭">×</button>
+    </div>
+    <div class="sheet-body" id="list"></div>
+    <form id="form" autocomplete="off">
+      <h2 id="form-title">添加设备</h2>
+      <div class="row">
+        <label>名称
+          <input id="f-name" required placeholder="书房台式机">
+        </label>
+        <label>接口
+          <select id="f-kind">
+            <option value="linux">Linux</option>
+            <option value="windows">Windows</option>
+          </select>
+        </label>
+      </div>
+      <label>地址
+        <input id="f-url" required inputmode="url" type="url"
+               placeholder="http://192.168.1.10:8787">
+      </label>
+      <div class="actions">
+        <button type="button" class="ghost" id="cancel" hidden>取消编辑</button>
+        <button type="submit" id="submit">添加</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+<script>
+(() => {
+  'use strict';
+
+  const DEBOUNCE_MS = 1500;   // 停止输入多久后自动发送
+  const TIMEOUT_MS = 8000;    // 单次请求等待上限
+
+  const KEY_DEVICES = 'put_text.devices';
+  const KEY_ACTIVE = 'put_text.active';
+
+  // 两个后端的路径不同，按 kind 选
+  const COMMIT_PATH = { linux: '/text', windows: '/paste' };
+
+  // 首次打开时的模板，地址默认是本机回环，连手机需要改成电脑的局域网 IP
+  const PRESETS = [
+    { id: 'p-linux', name: 'Linux 后端', kind: 'linux', url: 'http://127.0.0.1:8787' },
+    { id: 'p-windows', name: 'Windows 后端', kind: 'windows', url: 'http://127.0.0.1:18765' },
+  ];
+
+  // 后端返回的 reason 码 -> 人话
+  const REASONS = {
+    // Linux
+    socket_missing: '输入法插件没装或没重启',
+    no_focused_input_context: '当前没有聚焦的输入框',
+    input_method_rejected_request: '输入法拒绝了这次提交',
+    input_method_commit_timeout: '输入法提交超时',
+    input_method_commit_failed: '输入法提交失败',
+    linux_paste_tool_unavailable: '没有可用的粘贴工具',
+    xdg_runtime_dir_unavailable: '后端拿不到 XDG_RUNTIME_DIR',
+    clipboard_write_failed: '写剪贴板失败',
+    empty_input_method_response: '输入法没有回应',
+    // Windows
+    no_foreground_window: '没有前台窗口',
+    not_editable: '目标窗口不是可编辑控件',
+    clipboard_blocked: '剪贴板被别的程序占用',
+    send_input_short_write: '合成按键没有完整送出',
+    input_blocked_access_denied: '合成按键被安全软件拦截',
+    // 两边都有
+    empty_text: '内容是空的',
+    invalid_utf8: '内容不是合法的 UTF-8',
+    text_too_large: '内容太长',
+    payload_too_large: '内容太长',
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const el = {
+    picker: $('picker'), manage: $('manage'),
+    deviceName: $('device-name'), deviceHost: $('device-host'),
+    input: $('input'), status: $('status'), count: $('count'), send: $('send'),
+    sheet: $('sheet'), close: $('close'), list: $('list'),
+    form: $('form'), formTitle: $('form-title'), submit: $('submit'), cancel: $('cancel'),
+    fName: $('f-name'), fUrl: $('f-url'), fKind: $('f-kind'),
+  };
+
+  // ─── 存储 ───
+
+  function load(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function save(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch { /* 隐私模式下写不进去，本次会话内仍然可用 */ }
+  }
+
+  let devices = load(KEY_DEVICES, null);
+  if (!Array.isArray(devices) || devices.length === 0) devices = PRESETS.slice();
+
+  let activeId = load(KEY_ACTIVE, null);
+  if (!devices.some((d) => d.id === activeId)) activeId = devices[0].id;
+
+  const activeDevice = () => devices.find((d) => d.id === activeId) || null;
+
+  function persist() {
+    save(KEY_DEVICES, devices);
+    save(KEY_ACTIVE, activeId);
+  }
+
+  const newId = () => 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+  // ─── 上屏 ───
+
+  function failure(kind, message) {
+    const e = new Error(message);
+    e.kind = kind;
+    return e;
+  }
+
+  function reasonText(reason) {
+    if (!reason) return '';
+    return REASONS[reason] || reason;
+  }
+
+  async function commit(device, text) {
+    const base = device.url.replace(/\/+$/, '');
+    const path = COMMIT_PATH[device.kind] || COMMIT_PATH.linux;
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+    let res;
+    try {
+      res = await fetch(base + path, {
+        method: 'POST',
+        // 必须是 text/plain：它属于 CORS 简单请求，浏览器不会先发 OPTIONS 预检。
+        // 换成 application/json 或加任何自定义头都会触发预检，后端不处理，请求会失败。
+        headers: { 'Content-Type': 'text/plain' },
+        body: text,
+        signal: ctrl.signal,
+      });
+    } catch (e) {
+      if (e.name === 'AbortError') throw failure('timeout', '等待超时');
+      // 跨源且拿不到响应时 fetch 一律抛 TypeError。
+      // 后端已经带了 CORS 头，所以走到这里基本就是地址或端口不对。
+      throw failure('offline', '连不上，检查地址和端口');
+    } finally {
+      clearTimeout(timer);
+    }
+
+    let data;
+    try {
+      data = await res.json();
+    } catch {
+      throw failure('badresponse', `响应不是 JSON（HTTP ${res.status}）`);
+    }
+    if (!data.ok) {
+      throw failure('refused', reasonText(data.reason) || `HTTP ${res.status}`);
+    }
+    return data;
+  }
+
+  // ─── 防抖发送 ───
+
+  let timer = null;
+  let inflight = false;
+
+  function setStatus(text, kind) {
+    el.status.textContent = text;
+    if (kind) el.status.dataset.kind = kind;
+    else delete el.status.dataset.kind;
+  }
+
+  function refreshSendButton() {
+    el.send.disabled = !el.input.value.trim() || !activeDevice() || inflight;
+  }
+
+  function schedule() {
+    clearTimeout(timer);
+    timer = setTimeout(flush, DEBOUNCE_MS);
+  }
+
+  async function flush() {
+    clearTimeout(timer);
+    const device = activeDevice();
+    const text = el.input.value;
+    if (!device || !text.trim() || inflight) return;
+
+    inflight = true;
+    document.body.classList.add('sending');
+    setStatus('发送中…', 'busy');
+    refreshSendButton();
+
+    let sent = false;
+    try {
+      await commit(device, text);
+      sent = true;
+      // 只移除刚发出去的那一段，期间用户新敲的内容保留
+      if (el.input.value === text) el.input.value = '';
+      else if (el.input.value.startsWith(text)) el.input.value = el.input.value.slice(text.length);
+      setStatus('已上屏 · ' + device.name, 'ok');
+    } catch (err) {
+      // 文本保留，方便原样重试
+      setStatus('没上屏：' + err.message, 'err');
+    } finally {
+      inflight = false;
+      document.body.classList.remove('sending');
+      updateCount();
+      refreshSendButton();
+      // 只在这次成功之后，才接着发「发送期间新敲的内容」。
+      // 失败时停下等用户处理，否则会一直重试。
+      if (sent && el.input.value.trim()) schedule();
+    }
+  }
+
+  function updateCount() {
+    const n = el.input.value.length;
+    el.count.textContent = n ? n + ' 字' : '';
+  }
+
+  el.input.addEventListener('input', () => {
+    updateCount();
+    refreshSendButton();
+    schedule();
+  });
+  el.send.addEventListener('click', flush);
+
+  // 回车换行后光标可能被键盘挡住，滚到可见处
+  el.input.addEventListener('keyup', () => {
+    el.input.scrollTop = el.input.scrollHeight;
+  });
+
+  // ─── 设备面板 ───
+
+  let editingId = null;
+
+  function renderDevice() {
+    const d = activeDevice();
+    if (!d) {
+      el.deviceName.textContent = '未选择设备';
+      el.deviceHost.textContent = '';
+      return;
+    }
+    el.deviceName.textContent = d.name;
+    el.deviceHost.textContent = d.url.replace(/^https?:\/\//, '');
+  }
+
+  function renderList() {
+    el.list.replaceChildren();
+    if (devices.length === 0) {
+      const p = document.createElement('p');
+      p.className = 'empty';
+      p.textContent = '还没有设备，在下面添加一个。';
+      el.list.append(p);
+      return;
+    }
+    for (const d of devices) {
+      const row = document.createElement('div');
+      row.className = 'dev';
+      if (d.id === activeId) row.dataset.active = '1';
+
+      const pick = document.createElement('button');
+      pick.type = 'button';
+      pick.className = 'pick';
+      const tick = document.createElement('span');
+      tick.className = 'tick';
+      tick.textContent = d.id === activeId ? '✓' : '';
+      const label = document.createElement('span');
+      label.className = 'label';
+      const b = document.createElement('b');
+      b.textContent = d.name;
+      const small = document.createElement('small');
+      small.textContent = d.url + ' · ' + d.kind;
+      label.append(b, small);
+      pick.append(tick, label);
+      pick.addEventListener('click', () => {
+        activeId = d.id;
+        persist();
+        renderDevice();
+        renderList();
+        refreshSendButton();
+        setStatus('已切到 ' + d.name + ' · ' + d.url);
+        el.sheet.close();
+        el.input.focus();
+      });
+
+      const ops = document.createElement('div');
+      ops.className = 'ops';
+      const edit = document.createElement('button');
+      edit.type = 'button';
+      edit.textContent = '编辑';
+      edit.addEventListener('click', () => startEdit(d));
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.textContent = '删除';
+      del.addEventListener('click', () => remove(d));
+      ops.append(edit, del);
+
+      row.append(pick, ops);
+      el.list.append(row);
+    }
+  }
+
+  function startEdit(d) {
+    editingId = d.id;
+    el.fName.value = d.name;
+    el.fUrl.value = d.url;
+    el.fKind.value = d.kind;
+    el.formTitle.textContent = '编辑设备';
+    el.submit.textContent = '保存';
+    el.cancel.hidden = false;
+    el.fName.focus();
+  }
+
+  function resetForm() {
+    editingId = null;
+    el.form.reset();
+    el.formTitle.textContent = '添加设备';
+    el.submit.textContent = '添加';
+    el.cancel.hidden = true;
+  }
+
+  function remove(d) {
+    if (!confirm('删除设备「' + d.name + '」？')) return;
+    devices = devices.filter((x) => x.id !== d.id);
+    if (activeId === d.id) activeId = devices.length ? devices[0].id : null;
+    persist();
+    if (editingId === d.id) resetForm();
+    renderDevice();
+    renderList();
+    refreshSendButton();
+  }
+
+  el.form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const name = el.fName.value.trim();
+    let url = el.fUrl.value.trim().replace(/\/+$/, '');
+    if (!name || !url) return;
+    if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
+    const kind = el.fKind.value;
+
+    if (editingId) {
+      const d = devices.find((x) => x.id === editingId);
+      if (d) Object.assign(d, { name, url, kind });
+    } else {
+      const d = { id: newId(), name, url, kind };
+      devices.push(d);
+      if (!activeId) activeId = d.id;
+    }
+    persist();
+    resetForm();
+    renderDevice();
+    renderList();
+    refreshSendButton();
+  });
+
+  el.cancel.addEventListener('click', resetForm);
+
+  function openSheet() {
+    resetForm();
+    renderList();
+    el.sheet.showModal();
+  }
+  el.picker.addEventListener('click', openSheet);
+  el.manage.addEventListener('click', openSheet);
+  el.close.addEventListener('click', () => el.sheet.close());
+
+  // 点背景关闭（点内容不关）
+  el.sheet.addEventListener('click', (e) => {
+    if (e.target === el.sheet) el.sheet.close();
+  });
+
+  // ─── 启动 ───
+
+  persist();
+  renderDevice();
+  updateCount();
+  refreshSendButton();
+  el.input.focus();
+})();
+</script>
+
+</body>
+</html>
