@@ -2,11 +2,11 @@
 
 把 HTTP 请求变成「往当前聚焦的输入框里打字」。
 
-在本地起一个 HTTP 服务，收到 POST 就把正文上屏到前台窗口的输入框里。
+在本地起一个 HTTP 服务，收到请求就把正文上屏到当前聚焦的输入框里。
 用来把语音识别、大模型、脚本的输出直接送进任意应用，而不用关心那个应用
 是什么、有没有命令行接口、是否支持插件。
 
-上屏管线移植自 [SayIt](https://github.com/sayitapp/sayit) 及其 Linux 版
+上屏管线移植自 [SayIt](https://github.com/crosswk/SayIt) 及其 Linux 版
 [SayIt-Linux](https://github.com/Kishibe-Miru/SayIt-Linux)，两个平台各有一套实现。
 
 ## 分支
@@ -52,7 +52,8 @@ git clone -b windows https://github.com/link-fgfgui/put_text.git put_text   # Wi
    put_text.exe --host 0.0.0.0
    ```
 
-2. 把 `index.html` 传到手机，用浏览器打开（微信里打开不行，要用系统浏览器）。
+2. 把 `index.html` 传到手机，用系统浏览器打开（部分内置浏览器如微信不支持
+   打开本地文件，用系统浏览器最稳）。
 3. 点右上角 ⚙ 添加设备，地址填电脑的局域网 IP，例如
    `http://192.168.1.10:8787`（Linux）或 `http://192.168.1.10:18765`（Windows）。
 4. 点一下电脑上要输入的地方，让输入框获得焦点，然后开始打字。
@@ -87,7 +88,8 @@ fetch(url + '/text', {
 
 两个后端都遵循同一套设计：
 
-- **本地 HTTP 服务**，只监听 `127.0.0.1`，不接受外部连接。
+- **本地 HTTP 服务**，默认只监听 `127.0.0.1`，不接受外部连接
+  （给手机用要显式改成 `--host 0.0.0.0`）。
 - **逐级回退的上屏策略**：优先走能拿到输入上下文的正规通道，失败再退到
   「写剪贴板 + 合成粘贴」。
 - **剪贴板还原**：粘贴触发后延迟恢复用户原本的剪贴板内容，并用
@@ -106,7 +108,7 @@ fetch(url + '/text', {
 | 默认端口 | `8787` | `18765` |
 | 主接口 | `POST /text` | `POST /paste` |
 | GET 提交 | `GET /text?text=...` | `GET /paste?text=...` |
-| 状态查询 | `GET /` | `GET /health` |
+| 状态查询 | `GET /` | `GET /` 或 `GET /health` |
 | 请求体 | 原文 / JSON / 表单 | 原文 / JSON |
 | 目标窗口 | 只能是当前聚焦的输入框 | 可指定 `target_hwnd` / `focus_hwnd` |
 | 额外参数 | `--no-restore-clipboard` | `restore_clipboard` / `force` |
@@ -144,8 +146,14 @@ main/                       linux/                      windows/
 
 ## 许可
 
-- `linux` 分支下 `input-method/` 中的 Fcitx5 / IBus 代码来自
-  [SayIt-Linux](https://github.com/Kishibe-Miru/SayIt-Linux)，遵循 **AGPL-3.0**，
-  修改后的版本同样如此，详见该目录内的 `NOTICE`。
-- `windows` 分支的 C++ 实现移植自 [SayIt](https://github.com/sayitapp/sayit) 的
-  Windows 注入管线。
+**这个仓库的各个分支许可不同**，checkout 到哪个分支就适用哪个：
+
+| 分支 | 许可 | 原因 |
+|---|---|---|
+| `main` | **MIT** | `index.html` 与文档是原创，见 [LICENSE](LICENSE) |
+| `linux` | **AGPL-3.0** | `input-method/` 逐字复制自 [SayIt-Linux](https://github.com/Kishibe-Miru/SayIt-Linux)（AGPL-3.0），`src/put_text.py` 也移植了其上屏逻辑 |
+| `windows` | **AGPL-3.0** | `src/inject.cpp` 移植自 [SayIt](https://github.com/crosswk/SayIt) 的 `client/src-tauri/src/inject/mod.rs`（AGPL-3.0） |
+
+两个上游都是 AGPL-3.0，所以**修改和分发两个后端分支时必须继续遵循 AGPL-3.0**，
+包括向网络用户提供服务时也要提供源码。各分支根目录有完整 LICENSE 全文，
+`linux` 分支的 `input-method/NOTICE` 另记了第三方代码的具体出处。
