@@ -8,7 +8,7 @@ Windows 服务。零第三方依赖，单个 exe。
 
 ```bat
 build.bat
-put_text.exe --port 18765
+put_text.exe          # 默认监听 127.0.0.1:8787
 ```
 
 ## 上屏原理
@@ -49,16 +49,25 @@ build.bat
 ## 使用
 
 ```bat
-put_text.exe [--port 18765] [--host 127.0.0.1]
+put_text.exe [--port 8787] [--host 127.0.0.1] [--no-restore-clipboard] [--verbose]
 ```
+
+`--no-restore-clipboard` 上屏后不还原剪贴板（等价于每次请求 `restore_clipboard:false`），
+`--verbose` 逐请求打印日志到 stdout。
 
 ### API
 
-**`GET /` 或 `GET /health`** —— 健康检查，返回 `{"ok":true,"service":"put_text",...}`。
+接口与 `linux` 分支统一：主端点 `POST /text`，默认端口同为 `8787`。
+`POST /` 与 `POST /paste` 保留为兼容别名（对应 linux 的 `POST /` 别名），
+`GET /health` 同理。
 
-**`POST /paste`** —— 上屏。
+**`GET /`（或 `GET /health`、无参数的 `GET /text`）** —— 状态查询，
+返回 `{"ok":true,"service":"put_text",...}`。
 
-JSON 请求体：
+**`POST /text`** —— 上屏。请求体按 `Content-Type` 解释（与 linux 分支一致）：
+
+- `Content-Type: application/json` —— 顶层是字符串时整体即正文；顶层是对象时
+  取 `text` / `content` / `body` 键作为正文，并支持以下 Windows 扩展字段：
 
 ```json
 {
@@ -72,13 +81,15 @@ JSON 请求体：
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `text` | — | 待上屏文本（UTF-8，必填） |
+| `text` / `content` / `body` | — | 待上屏文本（UTF-8，至少给一个） |
 | `restore_clipboard` | `true` | 上屏后是否还原剪贴板 |
 | `target_hwnd` | `0`（=前台窗口） | 目标窗口句柄 |
 | `focus_hwnd` | `0`（=自动探测） | 焦点子控件句柄 |
 | `force` | `false` | `true` 时跳过可编辑性检测 |
 
-`Content-Type: text/plain` 时请求体原文即 `text`，其余字段取默认值。
+- `Content-Type: text/plain` —— 请求体原文即正文，扩展字段取默认值。
+- `Content-Type: application/x-www-form-urlencoded` —— 取 `text=` / `content=` /
+  `body=` 键值（`curl --data` 的默认格式）；无这些键时整体视为纯文本。
 
 响应镜像 SayIt 的 `InjectResult`：
 
@@ -98,17 +109,20 @@ JSON 请求体：
 
 失败时 `ok:false`，`reason` 说明卡在哪一步：`no_foreground_window`、
 `not_editable`、`clipboard_blocked`、`send_input_short_write`、
-`input_blocked_access_denied`、`invalid_utf8`、`empty_text`。
+`input_blocked_access_denied`、`invalid_utf8`、`invalid_json`、
+`json_missing_text_field`、`json_body_not_object_or_string`。
+空文本不算失败，返回 `{"ok":true,"strategy":"empty_text",...}`（与 linux 一致）。
 `detail` 里带句柄、窗口类名、错误码等，排查时先看它。
 
-注意 **HTTP 状态码不反映上屏结果**：`/paste` 一律返回 `200`，
-只有 `400`（请求解析失败）和 `404`（路由不存在）例外。
-成功还是失败要看 body 里的 `ok`。
+**HTTP 状态码与上屏结果一致**（与 linux 分支相同）：上屏成功返回 `200`，
+失败返回 `502`；只有 `400`（请求解析失败，如非法 JSON、缺正文字段）和
+`404`（路由不存在）例外。body 里的 `ok` 是同一件事的另一面，两边都判断即可。
 
-**`GET /paste?text=...`** —— 等价于 POST，方便浏览器地址栏和脚本直接测：
+**`GET /text?text=...`** —— 等价于 POST，方便浏览器地址栏和脚本直接测
+（也认 `content=` / `body=`；无这些参数时等同 `GET /` 返回状态）：
 
 ```bash
-curl 'http://127.0.0.1:18765/paste?text=%E4%BD%A0%E5%A5%BD'
+curl 'http://127.0.0.1:8787/text?text=%E4%BD%A0%E5%A5%BD'
 ```
 
 其余参数取默认值（还原剪贴板、前台窗口、不跳过可编辑性检测）。
@@ -129,7 +143,7 @@ Access-Control-Allow-Origin: *
 具体就是 `POST` + `Content-Type: text/plain`，正文直接放请求体：
 
 ```js
-await fetch('http://192.168.1.10:18765/paste', {
+await fetch('http://192.168.1.10:8787/text', {
   method: 'POST',
   headers: { 'Content-Type': 'text/plain' },
   body: '你好，世界',
@@ -148,12 +162,12 @@ await fetch('http://192.168.1.10:18765/paste', {
 
 ```bash
 # 上屏到当前前台窗口
-curl -X POST http://127.0.0.1:18765/paste \
+curl -X POST http://127.0.0.1:8787/text \
   -H "Content-Type: application/json" \
   -d '{"text":"你好，世界","restore_clipboard":true}'
 
 # 上屏到指定窗口（并绕过可编辑性检查）
-curl -X POST http://127.0.0.1:18765/paste \
+curl -X POST http://127.0.0.1:8787/text \
   -d '{"text":"hi","target_hwnd":123456,"force":true}'
 ```
 
