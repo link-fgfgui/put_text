@@ -8,6 +8,10 @@
 //        Content-Type: text/plain     → 请求体原文即 text
 //   响应 (HTTP 200/400): {"ok":bool,"strategy":...|null,"reason":...|null,
 //                        "detail":...|null,"uncertain":bool}
+//   GET  /paste?text=...              → 执行上屏（GET 信标，给浏览器跨源页面用）
+//        浏览器把请求当图片加载，所以成功时回一张 1×1 GIF（前端 onload 即成功），
+//        失败时回上面的 JSON（不是图片，前端 onerror）。
+//        其他客户端（Accept 不含 image/）一律回 JSON。
 #define NOMINMAX
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -186,7 +190,7 @@ static std::string json_nullable(const std::string& s) {
 
 // ─── 极简 HTTP/1.1 客户端解析 ───
 struct HttpRequest {
-    std::string method, path;
+    std::string method, path, query;
     std::map<std::string, std::string> headers;
     std::string body;
 };
@@ -203,9 +207,12 @@ static bool http_parse(const std::string& raw, HttpRequest& req) {
     if (sp1 == std::string::npos || sp2 == sp1) return false;
     req.method = request_line.substr(0, sp1);
     req.path = request_line.substr(sp1 + 1, sp2 - sp1 - 1);
-    // 去掉 query
+    // 拆出 query：GET 信标把正文放在 ?text= 里
     size_t q = req.path.find('?');
-    if (q != std::string::npos) req.path = req.path.substr(0, q);
+    if (q != std::string::npos) {
+        req.query = req.path.substr(q + 1);
+        req.path = req.path.substr(0, q);
+    }
 
     size_t pos = line_end + 2;
     while (pos < header_end) {
@@ -226,7 +233,100 @@ static bool http_parse(const std::string& raw, HttpRequest& req) {
     return true;
 }
 
-// ─── 上屏请求处理 ───
+// ─── query 解析（GET 信标用） ───
+static int hex_val(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+// %XX 还原成原始字节，'+' 还原成空格（与浏览器 encodeURIComponent 之外的表单编码一致）
+static std::string url_decode(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); i++) {
+        if (s[i] == '+') {
+            out += ' ';
+        } else if (s[i] == '%' && i + 2 < s.size()) {
+            int hi = hex_val(s[i + 1]), lo = hex_val(s[i + 2]);
+            if (hi < 0 || lo < 0) {
+                out += s[i];
+            } else {
+                out += (char)((hi << 4) | lo);
+                i += 2;
+            }
+        } else {
+            out += s[i];
+        }
+    }
+    return out;
+}
+
+static std::string query_param(const std::string& query, const char* key) {
+    size_t pos = 0;
+    while (pos <= query.size()) {
+        size_t amp = query.find('&', pos);
+        size_t end = (amp == std::string::npos) ? query.size() : amp;
+        std::string pair = query.substr(pos, end - pos);
+        size_t eq = pair.find('=');
+        if (eq != std::string::npos && pair.compare(0, eq, key) == 0) {
+            return url_decode(pair.substr(eq + 1));
+        }
+        if (amp == std::string::npos) break;
+        pos = amp + 1;
+    }
+    return "";
+}
+
+// ─── 上屏 ───
+
+// 1×1 透明 GIF。GET 信标把它当图片加载，onload 即代表上屏成功。
+static const unsigned char BEACON_GIF[] = {
+    0x47, 0x49, 0x46, 0x38, 0x39, 0x61,                                       // GIF89a
+    0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00,                                 // 逻辑屏幕 1×1
+    0x00, 0x00, 0x00, 0xff, 0xff, 0xff,                                       // 全局调色板
+    0x21, 0xf9, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00,                           // 图形控制块（透明）
+    0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,               // 图像描述符
+    0x02, 0x01, 0x44, 0x00, 0x3b,                                             // LZW 数据 + 结束符
+};
+
+// 浏览器 <img> 的 Accept 里有 image/，用它区分信标和其他客户端
+static bool wants_image(const HttpRequest& req) {
+    auto it = req.headers.find("accept");
+    return it != req.headers.end() && it->second.find("image/") != std::string::npos;
+}
+
+// UTF-8 正文 → UTF-16 → 上屏。POST 与 GET 共用。
+static InjectResult commit_text(const std::string& text, bool restore_clipboard,
+                                uintptr_t target_hwnd, uintptr_t focus_hwnd, bool force) {
+    InjectResult out;
+    std::wstring wtext;
+    int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), (int)text.size(), nullptr, 0);
+    if (n <= 0) {
+        out.reason = "invalid_utf8";
+        return out;
+    }
+    wtext.resize(n);
+    MultiByteToWideChar(CP_UTF8, 0, text.data(), (int)text.size(), &wtext[0], n);
+
+    InjectRequest ireq;
+    ireq.text = wtext;
+    ireq.restore_clipboard = restore_clipboard;
+    ireq.target_hwnd = target_hwnd;
+    ireq.focus_hwnd = focus_hwnd;
+    ireq.force = force;
+    return inject_text(ireq);
+}
+
+static std::string result_to_json(const InjectResult& r) {
+    return "{\"ok\":" + std::string(r.ok ? "true" : "false") +
+           ",\"strategy\":" + json_nullable(r.strategy) +
+           ",\"reason\":" + json_nullable(r.reason) +
+           ",\"detail\":" + json_nullable(r.detail) +
+           ",\"uncertain\":" + (r.uncertain ? "true" : "false") + "}";
+}
+
 static std::string handle_paste(const HttpRequest& req) {
     std::string text;
     std::string ctype = req.headers.count("content-type") ? req.headers.at("content-type") : "";
@@ -248,19 +348,9 @@ static std::string handle_paste(const HttpRequest& req) {
         return "{\"ok\":false,\"strategy\":null,\"reason\":\"empty_text\",\"detail\":null,\"uncertain\":false}";
     }
 
-    // 以正确 UTF-16 编码构造文本
-    std::wstring wtext;
-    {
-        int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), (int)text.size(), nullptr, 0);
-        if (n <= 0) {
-            return "{\"ok\":false,\"strategy\":null,\"reason\":\"invalid_utf8\",\"detail\":null,\"uncertain\":false}";
-        }
-        wtext.resize(n);
-        MultiByteToWideChar(CP_UTF8, 0, text.data(), (int)text.size(), &wtext[0], n);
-    }
-
-    InjectRequest ireq;
-    ireq.text = wtext;
+    bool restore = true;
+    uintptr_t target = 0, focus = 0;
+    bool force = false;
     if (has_json) {
         auto f_bool = [&](const char* key, bool def) {
             auto f = root.obj.find(key);
@@ -272,29 +362,42 @@ static std::string handle_paste(const HttpRequest& req) {
             if (f == root.obj.end()) return 0ll;
             return json_num_of(f->second);
         };
-        ireq.restore_clipboard = f_bool("restore_clipboard", true);
-        ireq.target_hwnd = (uintptr_t)f_num("target_hwnd");
-        ireq.focus_hwnd = (uintptr_t)f_num("focus_hwnd");
-        ireq.force = f_bool("force", false);
-    } else {
-        // 纯文本模式（text/plain）:剪贴板还原默认开，目标为前台窗口
-        ireq.restore_clipboard = true;
+        restore = f_bool("restore_clipboard", true);
+        target = (uintptr_t)f_num("target_hwnd");
+        focus = (uintptr_t)f_num("focus_hwnd");
+        force = f_bool("force", false);
     }
 
-    InjectResult r = inject_text(ireq);
-    std::string body = "{\"ok\":" + std::string(r.ok ? "true" : "false") +
-                       ",\"strategy\":" + json_nullable(r.strategy) +
-                       ",\"reason\":" + json_nullable(r.reason) +
-                       ",\"detail\":" + json_nullable(r.detail) +
-                       ",\"uncertain\":" + (r.uncertain ? "true" : "false") + "}";
-    return body;
+    return result_to_json(commit_text(text, restore, target, focus, force));
 }
 
-static void send_http(SOCKET s, int code, const std::string& body) {
-    const char* reason = (code == 200) ? "OK" : (code == 400 ? "Bad Request" : "Not Found");
+// GET /paste?text=... —— 浏览器跨源页面发来的信标。
+// 成功回 1×1 GIF（前端 onload），失败回 JSON（前端 onerror）。
+static void handle_beacon(const HttpRequest& req, int& code, std::string& body, const char*& ctype) {
+    std::string text = query_param(req.query, "text");
+    if (text.empty()) {
+        code = 400;
+        body = "{\"ok\":false,\"strategy\":null,\"reason\":\"empty_text\",\"detail\":null,\"uncertain\":false}";
+        return;
+    }
+    InjectResult r = commit_text(text, true, 0, 0, false);
+    if (r.ok && wants_image(req)) {
+        body.assign(reinterpret_cast<const char*>(BEACON_GIF), sizeof(BEACON_GIF));
+        ctype = "image/gif";
+    } else {
+        body = result_to_json(r);
+    }
+}
+
+static void send_http(SOCKET s, int code, const std::string& body,
+                      const char* ctype = "application/json; charset=utf-8") {
+    const char* reason = (code == 200) ? "OK"
+                       : (code == 400) ? "Bad Request"
+                       : (code == 502) ? "Bad Gateway" : "Not Found";
     std::string head = "HTTP/1.1 " + std::to_string(code) + " " + reason + "\r\n"
-                       "Content-Type: application/json; charset=utf-8\r\n"
+                       "Content-Type: " + ctype + "\r\n"
                        "Content-Length: " + std::to_string(body.size()) + "\r\n"
+                       "Cache-Control: no-store\r\n"
                        "Connection: close\r\n\r\n";
     std::string resp = head + body;
     send(s, resp.data(), (int)resp.size(), 0);
@@ -333,6 +436,7 @@ static DWORD WINAPI worker(LPVOID p) {
 
     HttpRequest req;
     std::string body;
+    const char* ctype = "application/json; charset=utf-8";
     int code = 200;
     if (!http_parse(raw, req)) {
         code = 400;
@@ -341,12 +445,14 @@ static DWORD WINAPI worker(LPVOID p) {
         body = "{\"ok\":true,\"service\":\"put_text\",\"desc\":\"POST /paste {\\\"text\\\":\\\"...\\\"} to insert text into the focused window\"}";
     } else if (req.method == "POST" && req.path == "/paste") {
         body = handle_paste(req);
+    } else if (req.method == "GET" && req.path == "/paste") {
+        handle_beacon(req, code, body, ctype);
     } else {
         code = 404;
         body = "{\"ok\":false,\"reason\":\"not_found\"}";
     }
 
-    send_http(s, code, body);
+    send_http(s, code, body, ctype);
     closesocket(s);
     return 0;
 }
