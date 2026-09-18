@@ -10,7 +10,7 @@ curl -s localhost:8787/text --data-binary '你好，世界'
 
 ## 上屏原理
 
-`src/put_text.py:231` 的 `commit_text()` 逐级回退：
+`src/put_text.py:237` 的 `commit_text()` 逐级回退：
 
 1. **Fcitx5 模块** —— `$XDG_RUNTIME_DIR/sayit-linux/fcitx5.sock`
 2. **IBus 引擎** —— `$XDG_RUNTIME_DIR/sayit-linux/ibus.sock`
@@ -156,6 +156,7 @@ await fetch('http://192.168.1.10:8787/text', {
 | `fcitx5_commit` / `ibus_commit` | 输入法正规通道 |
 | `clipboard_wtype` / `clipboard_ydotool` / `clipboard_xdotool` | 剪贴板 + 合成按键 |
 | `clipboard_only` | 文本已进剪贴板，但没有工具能触发粘贴 |
+| `clipboard_write` | 连剪贴板都没写进去（失败） |
 | `empty_text` | 收到空文本，没做事 |
 
 `reason` 为失败原因，常见的有：`socket_missing`（插件没装/没重启）、
@@ -169,6 +170,7 @@ await fetch('http://192.168.1.10:8787/text', {
 
 ```
 setup.sh                 一键安装脚本
+LICENSE                  AGPL-3.0 全文
 src/put_text.py          HTTP 服务 + 上屏管线（单文件，标准库）
 input-method/
   install.sh             fcitx5 / ibus 的依赖与安装入口
@@ -191,6 +193,12 @@ input-method/
 
 ## 许可
 
-`input-method/` 下的 Fcitx5 / IBus 代码来自
-[SayIt-Linux](https://github.com/Kishibe-Miru/SayIt-Linux)，遵循 **AGPL-3.0**，
-修改后的版本同样如此。详见 `input-method/NOTICE`。
+本分支遵循 **AGPL-3.0**，全文见 [LICENSE](LICENSE)。
+
+上游都是 AGPL-3.0，本分支是它们的衍生作品，所以修改和分发时**必须继续遵循
+AGPL-3.0**，包括通过网络提供服务时也要向用户提供源码：
+
+- `input-method/` 下的 Fcitx5 / IBus 代码逐字复制自
+  [SayIt-Linux](https://github.com/Kishibe-Miru/SayIt-Linux)，
+  具体出处和本地改动见 `input-method/NOTICE`。
+- `src/put_text.py` 的输入法提交逻辑同样移植自 SayIt-Linux。
