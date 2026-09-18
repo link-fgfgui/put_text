@@ -1,0 +1,19 @@
+Third-party code notice
+=======================
+
+The files under fcitx5/ and ibus/ are copied (with minimal edits) from
+SayIt-Linux — https://github.com/Kishibe-Miru/SayIt-Linux
+
+  client/src-tauri/linux/fcitx5/  -> fcitx5/
+  client/src-tauri/linux/ibus/    -> ibus/
+
+Upstream is licensed under GNU AGPL v3.0; see https://www.gnu.org/licenses/agpl-3.0.html
+These copies remain AGPL-3.0, as does any modified version of them.
+
+Local modifications:
+  fcitx5/install-system.sh — fall back to "Unix Makefiles" when ninja is absent.
+
+Protocol shared with put_text.py (unchanged from upstream):
+  Unix socket at $XDG_RUNTIME_DIR/sayit-linux/{fcitx5,ibus}.sock
+  Request:  4-byte big-endian length + UTF-8 text
+  Response: OK / NO_FOCUS / INVALID / TIMEOUT / ERROR

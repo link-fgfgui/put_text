@@ -10,3 +10,10 @@ desktop.ini
 
 # 日志
 *.log
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Fcitx5 模块的 cmake/ninja 构建产物
+input-method/fcitx5/build/
