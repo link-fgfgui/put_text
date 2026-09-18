@@ -3,7 +3,7 @@
 接收 HTTP POST，按 SayIt 的上屏原理把文本输入到当前聚焦窗口或指定窗口的
 Windows 服务。零第三方依赖，单个 exe。
 
-上屏管线移植自 [SayIt](https://github.com/sayitapp/sayit)
+上屏管线移植自 [SayIt](https://github.com/crosswk/SayIt)
 （`client/src-tauri/src/inject/mod.rs`）。
 
 ```bat
@@ -54,7 +54,7 @@ put_text.exe [--port 18765] [--host 127.0.0.1]
 
 ### API
 
-**`GET /health`** —— 健康检查，返回 `{"ok":true,"service":"put_text",...}`。
+**`GET /` 或 `GET /health`** —— 健康检查，返回 `{"ok":true,"service":"put_text",...}`。
 
 **`POST /paste`** —— 上屏。
 
@@ -161,6 +161,7 @@ curl -X POST http://127.0.0.1:18765/paste \
 
 ```
 build.bat      zig c++ 构建脚本
+LICENSE        AGPL-3.0 全文
 src/
   main.cpp     Winsock HTTP 服务 + 极简 JSON 解析
   inject.cpp   上屏管线（剪贴板 / WM_PASTE / SendInput / 还原 / 检测）
@@ -181,3 +182,12 @@ src/
   所以 `strategy` 只代表「消息投递成功」。
 - conhost / `SendInput` 分支建议在真实交互桌面下验证
   （受限 shell 中无法切换前台窗口）。
+
+## 许可
+
+本分支遵循 **AGPL-3.0**，全文见 [LICENSE](LICENSE)。
+
+`src/inject.cpp` 移植自 [SayIt](https://github.com/crosswk/SayIt) 的
+`client/src-tauri/src/inject/mod.rs`，上游是 AGPL-3.0，本分支是它的衍生作品，
+所以修改和分发时**必须继续遵循 AGPL-3.0**，包括通过网络提供服务时也要
+向用户提供源码。
