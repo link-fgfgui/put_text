@@ -48,7 +48,7 @@ git clone -b windows <repo-url> put_text   # Windows 后端
 | 请求体 | 原文 / JSON / 表单 | 原文 / JSON |
 | 目标窗口 | 只能是当前聚焦的输入框 | 可指定 `target_hwnd` / `focus_hwnd` |
 | 额外参数 | `--no-restore-clipboard` | `restore_clipboard` / `force` |
-| 失败 HTTP 码 | `502` | `502` |
+| 上屏失败时的 HTTP 码 | `502` | `200`（只看 body 里的 `ok`） |
 
 示例：
 
