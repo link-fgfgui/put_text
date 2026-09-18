@@ -10,3 +10,13 @@ desktop.ini
 
 # 日志
 *.log
+build_log.txt
+build_err.txt
+
+# 构建产物
+put_text.exe
+put_text.pdb
+
+# Zig
+zig-cache/
+zig-out/

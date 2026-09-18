@@ -1,92 +1,140 @@
-# put_text
+# put_text — Windows 后端
 
-把 HTTP 请求变成「往当前聚焦的输入框里打字」。
+接收 HTTP POST，按 SayIt 的上屏原理把文本输入到当前聚焦窗口或指定窗口的
+Windows 服务。零第三方依赖，单个 exe。
 
-在本地起一个 HTTP 服务，收到 POST 就把正文上屏到前台窗口的输入框里。
-用来把语音识别、大模型、脚本的输出直接送进任意应用，而不用关心那个应用
-是什么、有没有命令行接口、是否支持插件。
+上屏管线移植自 [SayIt](https://github.com/sayitapp/sayit)
+（`client/src-tauri/src/inject/mod.rs`）。
 
-上屏管线移植自 [SayIt](https://github.com/sayitapp/sayit) 及其 Linux 版
-[SayIt-Linux](https://github.com/Kishibe-Miru/SayIt-Linux)，两个平台各有一套实现。
-
-## 分支
-
-两个后端各自独立成分支，按需要的平台 checkout，互不干扰：
-
-| 分支 | 平台 | 实现 | 上屏通道 |
-|---|---|---|---|
-| [`linux`](../../tree/linux) | Linux（Wayland / X11） | Python 单文件 + Fcitx5 / IBus 输入法插件 | 输入法 socket → 剪贴板 + 合成 `Ctrl+V` |
-| [`windows`](../../tree/windows) | Windows 10 / 11 | C++ 单二进制，零第三方依赖 | `WM_COMMAND` / `WM_PASTE` → `SendInput` `Ctrl+V` |
-| `main` | — | 只有本文档 | 无可运行代码 |
-
-```bash
-git clone -b linux   <repo-url> put_text   # Linux 后端
-git clone -b windows <repo-url> put_text   # Windows 后端
+```bat
+build.bat
+put_text.exe --port 18765
 ```
 
-## 相同点
+## 上屏原理
 
-两个后端都遵循同一套设计：
+`src/inject.cpp:453` 的 `inject_text()` 逐级回退：
 
-- **本地 HTTP 服务**，只监听 `127.0.0.1`，不接受外部连接。
-- **逐级回退的上屏策略**：优先走能拿到输入上下文的正规通道，失败再退到
-  「写剪贴板 + 合成粘贴」。
-- **剪贴板还原**：粘贴触发后延迟恢复用户原本的剪贴板内容，并用
-  「代数计数器 + 内容复核」避免覆盖用户随后复制的内容。
-- **结构化响应**：返回 `ok` / `strategy` / `reason` / `detail`，
-  调用方可以判断到底是哪条路径生效、失败在哪一步。
+1. **写剪贴板** —— `CF_UNICODETEXT`（UTF-16），5 次重试 × 30ms；同时写入
+   `CanIncludeInClipboardHistory` / `CanUploadToCloudClipboard` /
+   `ExcludeClipboardContentFromMonitorProcessing` 标记，
+   避免污染 Win+V 历史与云剪贴板。
+2. **策略优先级**：
+   - **conhost 控制台** —— `WM_COMMAND` + 系统菜单「粘贴」(0xFFF1)。
+     raw 模式（TUI 程序）下合成按键会被吞掉造成假成功，
+     而这个命令由 conhost 自身处理、不经过按键流。
+   - **原生编辑控件**（`Edit` / `RichEdit` / `Scintilla`）—— 直接投递
+     `WM_PASTE` 消息（0x0302），跨进程直达目标句柄，无需目标处于前台。
+   - **兜底：前台抢占 + 合成按键** —— `AttachThreadInput` + `VK_F24` 占位键
+     + `SetForegroundWindow` → 释放卡住的修饰键 → `SendInput` 模拟 `Ctrl+V`。
+   - **最后一搏** —— `SendInput` 被安全软件 / UIPI 拦截
+     （`ERROR_ACCESS_DENIED=5`）时再补一次 `WM_PASTE`。
+3. **剪贴板还原** —— 粘贴触发后由独立线程延迟 400ms 恢复原剪贴板内容；
+   通过「代数计数器 + 内容复核」防止覆盖用户随后复制的内容或下一次粘贴。
+4. **可编辑性检测** —— `GetGUIThreadInfo` 光标 → 原生可编辑控件类 →
+   Chromium 窗口类 → 进程名启发式；明确拒绝 explorer 桌面
+   （`Progman` / `WorkerW` 等）。
 
-## 不同点
+## 构建
 
-接口没有强行统一，两边各自贴合平台习惯：
+需要 [Zig 0.16+](https://ziglang.org/download/)（充当 C++ 编译器，
+零配置交叉链接 Windows 系统库）。
 
-| | `linux` | `windows` |
+```bat
+build.bat
+```
+
+产物：`put_text.exe`（约 48KB，仅依赖系统库 `user32` / `kernel32` / `ws2_32`）。
+
+## 使用
+
+```bat
+put_text.exe [--port 18765] [--host 127.0.0.1]
+```
+
+### API
+
+**`GET /health`** —— 健康检查，返回 `{"ok":true,"service":"put_text",...}`。
+
+**`POST /paste`** —— 上屏。
+
+JSON 请求体：
+
+```json
+{
+  "text": "要输入的内容",
+  "restore_clipboard": true,
+  "target_hwnd": 0,
+  "focus_hwnd": 0,
+  "force": false
+}
+```
+
+| 字段 | 默认 | 说明 |
 |---|---|---|
-| 默认端口 | `8787` | `18765` |
-| 主接口 | `POST /text` | `POST /paste` |
-| 状态查询 | `GET /` | `GET /health` |
-| 请求体 | 原文 / JSON / 表单 | 原文 / JSON |
-| 目标窗口 | 只能是当前聚焦的输入框 | 可指定 `target_hwnd` / `focus_hwnd` |
-| 额外参数 | `--no-restore-clipboard` | `restore_clipboard` / `force` |
-| 失败 HTTP 码 | `502` | `502` |
+| `text` | — | 待上屏文本（UTF-8，必填） |
+| `restore_clipboard` | `true` | 上屏后是否还原剪贴板 |
+| `target_hwnd` | `0`（=前台窗口） | 目标窗口句柄 |
+| `focus_hwnd` | `0`（=自动探测） | 焦点子控件句柄 |
+| `force` | `false` | `true` 时跳过可编辑性检测 |
 
-示例：
+`Content-Type: text/plain` 时请求体原文即 `text`，其余字段取默认值。
+
+响应镜像 SayIt 的 `InjectResult`：
+
+```json
+{"ok":true,"strategy":"wm_paste","reason":null,"detail":"hwnd=... class=scintilla textLen=10","uncertain":false}
+```
+
+`strategy` 说明走通了哪条路：
+
+| `strategy` | 含义 |
+|---|---|
+| `console_paste` | conhost 系统菜单粘贴 |
+| `wm_paste` | 直接投递 `WM_PASTE` 给原生编辑控件 |
+| `send_input` | 前台抢占 + 合成 `Ctrl+V` |
+| `wm_paste_last_resort` | `SendInput` 被拦后的最后一次 `WM_PASTE` |
+| `clipboard` | 只写进了剪贴板，没找到可粘贴的窗口 |
+
+失败时 `ok:false`，`reason` 说明卡在哪一步：`no_foreground_window`、
+`not_editable`、`clipboard_blocked`、`send_input_short_write`、
+`input_blocked_access_denied`、`invalid_utf8`、`empty_text`。
+`detail` 里带句柄、窗口类名、错误码等，排查时先看它。
+
+注意 **HTTP 状态码不反映上屏结果**：`/paste` 一律返回 `200`，
+只有 `400`（请求解析失败）和 `404`（路由不存在）例外。
+成功还是失败要看 body 里的 `ok`。
+
+### 示例
 
 ```bash
-# Linux
-curl -s localhost:8787/text --data-binary '你好，世界'
+# 上屏到当前前台窗口
+curl -X POST http://127.0.0.1:18765/paste \
+  -H "Content-Type: application/json" \
+  -d '{"text":"你好，世界","restore_clipboard":true}'
 
-# Windows
-curl -s -X POST localhost:18765/paste \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"你好，世界"}'
+# 上屏到指定窗口（并绕过可编辑性检查）
+curl -X POST http://127.0.0.1:18765/paste \
+  -d '{"text":"hi","target_hwnd":123456,"force":true}'
 ```
 
 ## 目录结构
 
-各分支 checkout 后的布局是对称的：`src/` 放核心实现，平台相关的构建/安装脚本
-放根目录。
-
 ```
-main/
-  README.md
-
-linux/                      windows/
-  README.md                   README.md
-  setup.sh                    build.bat
-  src/put_text.py             src/main.cpp
-  input-method/               src/inject.cpp
-    fcitx5/                   src/inject.hpp
-    ibus/
+build.bat      zig c++ 构建脚本
+src/
+  main.cpp     Winsock HTTP 服务 + 极简 JSON 解析
+  inject.cpp   上屏管线（剪贴板 / WM_PASTE / SendInput / 还原 / 检测）
+  inject.hpp
 ```
 
-`linux` 还需要单独安装 `input-method/` 里的输入法插件 —— 那是把文本送上屏的
-正规通道，`setup.sh` 会自动编译安装；`windows` 是单个 exe，构建完即安装完。
+## 局限
 
-## 许可
-
-- `linux` 分支下 `input-method/` 中的 Fcitx5 / IBus 代码来自
-  [SayIt-Linux](https://github.com/Kishibe-Miru/SayIt-Linux)，遵循 **AGPL-3.0**，
-  修改后的版本同样如此，详见该目录内的 `NOTICE`。
-- `windows` 分支的 C++ 实现移植自 [SayIt](https://github.com/sayitapp/sayit) 的
-  Windows 注入管线。
+- 仅支持 Windows。
+- UIA 可编辑性判定未移植（SayIt 中用于更精细地识别富文本编辑器），
+  本实现以光标 + 控件类 + 进程名启发式覆盖常见场景；
+  遇到误判可以用 `force:true` 跳过检测。
+- `WM_PASTE` 收到消息后是否真的插入了文本无法确认，
+  所以 `strategy` 只代表「消息投递成功」。
+- conhost / `SendInput` 分支建议在真实交互桌面下验证
+  （受限 shell 中无法切换前台窗口）。
