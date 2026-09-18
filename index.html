@@ -381,13 +381,13 @@
   const KEY_DEVICES = 'put_text.devices';
   const KEY_ACTIVE = 'put_text.active';
 
-  // 两个后端的路径不同，按 kind 选
-  const COMMIT_PATH = { linux: '/text', windows: '/paste' };
+  // 两个后端的接口已统一，都是 POST /text（kind 仅作展示用）
+  const COMMIT_PATH = '/text';
 
   // 首次打开时的模板，地址默认是本机回环，连手机需要改成电脑的局域网 IP
   const PRESETS = [
     { id: 'p-linux', name: 'Linux 后端', kind: 'linux', url: 'http://127.0.0.1:8787' },
-    { id: 'p-windows', name: 'Windows 后端', kind: 'windows', url: 'http://127.0.0.1:18765' },
+    { id: 'p-windows', name: 'Windows 后端', kind: 'windows', url: 'http://127.0.0.1:8787' },
   ];
 
   // 后端返回的 reason 码 -> 人话
@@ -408,8 +408,11 @@
     clipboard_blocked: '剪贴板被别的程序占用',
     send_input_short_write: '合成按键没有完整送出',
     input_blocked_access_denied: '合成按键被安全软件拦截',
+    // 请求体解析失败（页面只用 text/plain，一般不会触发，留着以防后端报错）
+    invalid_json: '请求体不是合法的 JSON',
+    json_missing_text_field: 'JSON 里没有 text/content/body 字段',
+    json_body_not_object_or_string: 'JSON 顶层既不是对象也不是字符串',
     // 两边都有
-    empty_text: '内容是空的',
     invalid_utf8: '内容不是合法的 UTF-8',
     text_too_large: '内容太长',
     payload_too_large: '内容太长',
@@ -472,13 +475,12 @@
 
   async function commit(device, text) {
     const base = device.url.replace(/\/+$/, '');
-    const path = COMMIT_PATH[device.kind] || COMMIT_PATH.linux;
 
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
     let res;
     try {
-      res = await fetch(base + path, {
+      res = await fetch(base + COMMIT_PATH, {
         method: 'POST',
         // 必须是 text/plain：它属于 CORS 简单请求，浏览器不会先发 OPTIONS 预检。
         // 换成 application/json 或加任何自定义头都会触发预检，后端不处理，请求会失败。

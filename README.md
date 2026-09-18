@@ -36,7 +36,7 @@ git clone -b windows https://github.com/link-fgfgui/put_text.git put_text   # Wi
 - **停 1.5 秒自动发送**：停止输入 1.5 秒后自动上屏并清空输入框，
   适合「说一句、上屏一句」的听写节奏。发送失败时文本保留，不会丢。
 - **设备列表**：保存多台后端（名称 + 地址 + 平台），存在 `localStorage`，
-  随时切换。首次打开预置了两个模板（Linux `:8787` / Windows `:18765`），
+  随时切换。首次打开预置了两个模板（都指向 `:8787` —— 两平台接口已统一），
   地址默认是本机回环，连手机要改成电脑的局域网 IP。
 - **状态栏显示真实结果**：上屏成功显示「已上屏」，失败显示后端返回的原因
   （如「当前没有聚焦的输入框」「输入法插件没装或没重启」），而不是笼统的「失败」。
@@ -55,7 +55,7 @@ git clone -b windows https://github.com/link-fgfgui/put_text.git put_text   # Wi
 2. 把 `index.html` 传到手机，用系统浏览器打开（部分内置浏览器如微信不支持
    打开本地文件，用系统浏览器最稳）。
 3. 点右上角 ⚙ 添加设备，地址填电脑的局域网 IP，例如
-   `http://192.168.1.10:8787`（Linux）或 `http://192.168.1.10:18765`（Windows）。
+   `http://192.168.1.10:8787`（Linux 和 Windows 都是这个端口）。
 4. 点一下电脑上要输入的地方，让输入框获得焦点，然后开始打字。
 
 ### 跨源与预检
@@ -86,10 +86,13 @@ fetch(url + '/text', {
 
 ## 相同点
 
-两个后端都遵循同一套设计：
+两个后端遵循同一套设计，**HTTP 契约完全一致**：
 
-- **本地 HTTP 服务**，默认只监听 `127.0.0.1`，不接受外部连接
+- **本地 HTTP 服务**，默认监听 `127.0.0.1:8787`，不接受外部连接
   （给手机用要显式改成 `--host 0.0.0.0`）。
+- **同一套接口**：`POST /text` 上屏（原文 / JSON / 表单三种请求体），
+  `GET /text?text=...` 等价提交，`GET /` 查状态；上屏成功返回 `200`，
+  失败返回 `502`，判断依据看 body 里的 `ok`。
 - **逐级回退的上屏策略**：优先走能拿到输入上下文的正规通道，失败再退到
   「写剪贴板 + 合成粘贴」。
 - **剪贴板还原**：粘贴触发后延迟恢复用户原本的剪贴板内容，并用
@@ -101,29 +104,38 @@ fetch(url + '/text', {
 
 ## 不同点
 
-接口没有强行统一，两边各自贴合平台习惯：
+HTTP 契约已统一，剩下的差异来自平台能力：`windows` 可以指定目标窗口
+（`target_hwnd` / `focus_hwnd`）并跳过可编辑性检测（`force`），
+`linux` 只能打到「当前聚焦的输入框」。
 
 | | `linux` | `windows` |
 |---|---|---|
-| 默认端口 | `8787` | `18765` |
-| 主接口 | `POST /text` | `POST /paste` |
-| GET 提交 | `GET /text?text=...` | `GET /paste?text=...` |
-| 状态查询 | `GET /` | `GET /` 或 `GET /health` |
-| 请求体 | 原文 / JSON / 表单 | 原文 / JSON |
+| 默认端口 | `8787` | `8787` |
+| 主接口 | `POST /text` | `POST /text`（`/paste` 是旧别名） |
+| GET 提交 | `GET /text?text=...` | `GET /text?text=...` |
+| 状态查询 | `GET /` | `GET /`（`/health` 是旧别名） |
+| 请求体 | 原文 / JSON / 表单 | 原文 / JSON / 表单 |
+| 上屏失败时的 HTTP 码 | `502` | `502` |
 | 目标窗口 | 只能是当前聚焦的输入框 | 可指定 `target_hwnd` / `focus_hwnd` |
-| 额外参数 | `--no-restore-clipboard` | `restore_clipboard` / `force` |
-| 上屏失败时的 HTTP 码 | `502` | `200`（只看 body 里的 `ok`） |
+| 额外参数 | `--no-restore-clipboard` | JSON `restore_clipboard` / `force`，CLI 也有 `--no-restore-clipboard` |
+| 上屏通道 | 输入法 socket → 剪贴板 + `Ctrl+V` | `WM_PASTE` → `SendInput` `Ctrl+V` |
 
-示例：
+示例（两平台同一套命令）：
 
 ```bash
 # Linux
 curl -s localhost:8787/text --data-binary '你好，世界'
 
-# Windows
-curl -s -X POST localhost:18765/paste \
+# Windows（同一条命令）
+curl -s localhost:8787/text --data-binary '你好，世界'
+```
+
+Windows 多出来的是可选的 JSON 扩展字段，例如指定目标窗口：
+
+```bash
+curl -s -X POST localhost:8787/text \
   -H 'Content-Type: application/json' \
-  -d '{"text":"你好，世界"}'
+  -d '{"text":"你好，世界","target_hwnd":123456}'
 ```
 
 ## 目录结构
