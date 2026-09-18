@@ -8,10 +8,11 @@
 //        Content-Type: text/plain     → 请求体原文即 text
 //   响应 (HTTP 200/400): {"ok":bool,"strategy":...|null,"reason":...|null,
 //                        "detail":...|null,"uncertain":bool}
-//   GET  /paste?text=...              → 执行上屏（GET 信标，给浏览器跨源页面用）
-//        浏览器把请求当图片加载，所以成功时回一张 1×1 GIF（前端 onload 即成功），
-//        失败时回上面的 JSON（不是图片，前端 onerror）。
-//        其他客户端（Accept 不含 image/）一律回 JSON。
+//   GET  /paste?text=...              → 执行上屏（等价 POST，方便地址栏/脚本直接测）
+//
+// 跨源：所有响应都带 Access-Control-Allow-Origin: *，浏览器页面可以直接 fetch
+//       读结果。页面只用简单请求（POST + Content-Type: text/plain），
+//       不触发 OPTIONS 预检，所以这里不需要处理 OPTIONS。
 #define NOMINMAX
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -207,7 +208,7 @@ static bool http_parse(const std::string& raw, HttpRequest& req) {
     if (sp1 == std::string::npos || sp2 == sp1) return false;
     req.method = request_line.substr(0, sp1);
     req.path = request_line.substr(sp1 + 1, sp2 - sp1 - 1);
-    // 拆出 query：GET 信标把正文放在 ?text= 里
+    // 拆出 query：GET /paste 把正文放在 ?text= 里
     size_t q = req.path.find('?');
     if (q != std::string::npos) {
         req.query = req.path.substr(q + 1);
@@ -233,7 +234,7 @@ static bool http_parse(const std::string& raw, HttpRequest& req) {
     return true;
 }
 
-// ─── query 解析（GET 信标用） ───
+// ─── query 解析 ───
 static int hex_val(char c) {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -280,22 +281,6 @@ static std::string query_param(const std::string& query, const char* key) {
 }
 
 // ─── 上屏 ───
-
-// 1×1 透明 GIF。GET 信标把它当图片加载，onload 即代表上屏成功。
-static const unsigned char BEACON_GIF[] = {
-    0x47, 0x49, 0x46, 0x38, 0x39, 0x61,                                       // GIF89a
-    0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00,                                 // 逻辑屏幕 1×1
-    0x00, 0x00, 0x00, 0xff, 0xff, 0xff,                                       // 全局调色板
-    0x21, 0xf9, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00,                           // 图形控制块（透明）
-    0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,               // 图像描述符
-    0x02, 0x01, 0x44, 0x00, 0x3b,                                             // LZW 数据 + 结束符
-};
-
-// 浏览器 <img> 的 Accept 里有 image/，用它区分信标和其他客户端
-static bool wants_image(const HttpRequest& req) {
-    auto it = req.headers.find("accept");
-    return it != req.headers.end() && it->second.find("image/") != std::string::npos;
-}
 
 // UTF-8 正文 → UTF-16 → 上屏。POST 与 GET 共用。
 static InjectResult commit_text(const std::string& text, bool restore_clipboard,
@@ -371,31 +356,26 @@ static std::string handle_paste(const HttpRequest& req) {
     return result_to_json(commit_text(text, restore, target, focus, force));
 }
 
-// GET /paste?text=... —— 浏览器跨源页面发来的信标。
-// 成功回 1×1 GIF（前端 onload），失败回 JSON（前端 onerror）。
-static void handle_beacon(const HttpRequest& req, int& code, std::string& body, const char*& ctype) {
+// GET /paste?text=... —— 等价于 POST，方便浏览器地址栏和脚本直接测
+static void handle_get_paste(const HttpRequest& req, int& code, std::string& body) {
     std::string text = query_param(req.query, "text");
     if (text.empty()) {
         code = 400;
         body = "{\"ok\":false,\"strategy\":null,\"reason\":\"empty_text\",\"detail\":null,\"uncertain\":false}";
         return;
     }
-    InjectResult r = commit_text(text, true, 0, 0, false);
-    if (r.ok && wants_image(req)) {
-        body.assign(reinterpret_cast<const char*>(BEACON_GIF), sizeof(BEACON_GIF));
-        ctype = "image/gif";
-    } else {
-        body = result_to_json(r);
-    }
+    body = result_to_json(commit_text(text, true, 0, 0, false));
 }
 
-static void send_http(SOCKET s, int code, const std::string& body,
-                      const char* ctype = "application/json; charset=utf-8") {
+static void send_http(SOCKET s, int code, const std::string& body) {
     const char* reason = (code == 200) ? "OK"
                        : (code == 400) ? "Bad Request"
                        : (code == 502) ? "Bad Gateway" : "Not Found";
     std::string head = "HTTP/1.1 " + std::to_string(code) + " " + reason + "\r\n"
-                       "Content-Type: " + ctype + "\r\n"
+                       "Content-Type: application/json; charset=utf-8\r\n"
+                       // 网页可能来自别的源（手机上的 file:// 或另一个 http 服务），
+                       // 跨源读响应需要这个头。前端只用简单请求，不会触发预检。
+                       "Access-Control-Allow-Origin: *\r\n"
                        "Content-Length: " + std::to_string(body.size()) + "\r\n"
                        "Cache-Control: no-store\r\n"
                        "Connection: close\r\n\r\n";
@@ -436,7 +416,6 @@ static DWORD WINAPI worker(LPVOID p) {
 
     HttpRequest req;
     std::string body;
-    const char* ctype = "application/json; charset=utf-8";
     int code = 200;
     if (!http_parse(raw, req)) {
         code = 400;
@@ -446,13 +425,13 @@ static DWORD WINAPI worker(LPVOID p) {
     } else if (req.method == "POST" && req.path == "/paste") {
         body = handle_paste(req);
     } else if (req.method == "GET" && req.path == "/paste") {
-        handle_beacon(req, code, body, ctype);
+        handle_get_paste(req, code, body);
     } else {
         code = 404;
         body = "{\"ok\":false,\"reason\":\"not_found\"}";
     }
 
-    send_http(s, code, body, ctype);
+    send_http(s, code, body);
     closesocket(s);
     return 0;
 }
