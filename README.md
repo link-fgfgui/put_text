@@ -65,6 +65,17 @@ src/put_text.py [--host 127.0.0.1] [--port 8787] [--no-restore-clipboard] [--ver
 
 `--no-restore-clipboard` 让上屏后的文本留在剪贴板里，不清回去。
 
+默认只监听 `127.0.0.1`，本机之外连不上。要让手机上的网页能发过来，
+得监听所有网卡，并用电脑的局域网 IP 访问：
+
+```bash
+src/put_text.py --host 0.0.0.0
+# 手机上访问 http://192.168.1.10:8787/text（IP 换成电脑的）
+```
+
+这么开等于把「往焦点窗口打字」的能力开放给整个局域网，**服务没有任何鉴权**，
+只在可信网络里这么用。
+
 ### API
 
 **`POST /text`** —— 上屏。请求体三种写法都认：
@@ -92,6 +103,45 @@ curl -s localhost:8787/text -H 'Content-Type: application/json' \
   "paste_tools": ["wtype", "wl-copy", "wl-paste"]
 }
 ```
+
+**`GET /text`** —— 不带参数时和 `GET /` 一样返回状态；带上 `text` / `content` /
+`body` 参数则和 `POST /text` 等价，方便浏览器地址栏和脚本直接测：
+
+```bash
+curl -s 'localhost:8787/text?text=%E4%BD%A0%E5%A5%BD'
+```
+
+正文会进 URL，浏览器历史和日志里会留一份，别用它传敏感内容。
+
+### 跨源调用
+
+所有响应都带：
+
+```
+Access-Control-Allow-Origin: *
+```
+
+所以网页（哪怕是从 `file://` 打开的，或者另一个端口上的静态服务）
+可以直接 `fetch` 这个接口并读到结果。
+
+**没有处理 `OPTIONS`**，因为不需要：网页只要用简单请求就不会触发预检。
+具体就是 `POST` + `Content-Type: text/plain`，正文直接放请求体：
+
+```js
+await fetch('http://192.168.1.10:8787/text', {
+  method: 'POST',
+  headers: { 'Content-Type': 'text/plain' },
+  body: '你好，世界',
+});
+// → {"ok":true,"strategy":"fcitx5_commit","reason":null,"detail":"..."}
+```
+
+一旦改成 `application/json`、或者加了任何自定义请求头，浏览器就会先发
+`OPTIONS` 探测，这个服务不处理，请求直接失败。要保持 `text/plain` 不变。
+
+`*` 意味着你浏览器里打开的**任何网页**都能读这个服务的响应，而这服务能往你
+当前焦点窗口打字。只在可信局域网里这么开，别暴露到公网。要收紧就把 `*`
+换成具体来源（如 `http://192.168.1.5:8000`）。
 
 ### 响应
 

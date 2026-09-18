@@ -18,6 +18,12 @@ Usage:
     curl -s localhost:8787/text --data-binary '你好，世界'
     curl -s localhost:8787/text -H 'Content-Type: application/json' \
          -d '{"text":"hello"}'
+    curl -s 'localhost:8787/text?text=hello'   # same thing over GET
+
+Cross-origin: every response carries Access-Control-Allow-Origin: *, so a web
+page on another origin can fetch this and read the result. Pages should use a
+simple request (POST + Content-Type: text/plain) so no OPTIONS preflight is
+needed — OPTIONS is deliberately not implemented.
 """
 
 from __future__ import annotations
@@ -291,7 +297,9 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "put_text"
     restore_clipboard = True
     # POST accepts /text (documented) plus / for backward compatibility;
-    # GET serves status on / (plus /text for convenience). Anything else 404s.
+    # GET serves status on / (plus /text for convenience), unless the request
+    # carries a text/content/body query param — then it commits like POST.
+    # Anything else 404s.
     POST_ROUTES = ("/text", "/")
     GET_ROUTES = ("/", "/text")
 
@@ -303,7 +311,11 @@ class Handler(BaseHTTPRequestHandler):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        # 网页可能来自别的源（手机上的 file:// 或另一个 http 服务），
+        # 跨源读响应需要这个头。前端只用简单请求，不会触发预检。
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
@@ -335,6 +347,22 @@ class Handler(BaseHTTPRequestHandler):
         if self._route(self.path) not in self.GET_ROUTES:
             self._finish(404, {"ok": False, "reason": "not_found"})
             return
+
+        # GET /text?text=... 等价于 POST，方便浏览器地址栏和脚本直接测
+        query = parse_qs(self.path.partition("?")[2])
+        text = next(
+            (query[key][0] for key in ("text", "content", "body") if query.get(key)),
+            None,
+        )
+        if text is not None:
+            result = commit_text(text, self.restore_clipboard)
+            log.info(
+                "GET %s chars=%d ok=%s strategy=%s",
+                self.path, len(text), result["ok"], result["strategy"],
+            )
+            self._finish(200 if result["ok"] else 502, result)
+            return
+
         parent = socket_parent()
         self._finish(
             200,
